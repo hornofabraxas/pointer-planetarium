@@ -1,0 +1,104 @@
+{
+  "name": "pointer-planetarium",
+  "author": "OmgSlayKween",
+  "version": "1.0",
+  "license": "MIT",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "PointerPlanetarium",
+    "uuid": "8b2f6f4e-5c1a-4d0b-9a63-2f7d1c4e9a51",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "capabilities": ["configurable", "location"],
+    "targetPlatforms": ["emery"],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "AIM_START", "A_SEQ", "A_T", "A_MS", "A_HEAD", "A_JIT", "A_AX", "A_AY", "A_AZ",
+      "A_CAL", "A_NC", "A_LAYER", "A_WRIST",
+      "LAYERS", "DAYLIGHT", "STATUS", "R_SEQ", "R_DATA",
+      "A_TUNE", "TUNE_TGT", "TUNE_N", "WRIST_Q",
+      "R_CHART", "R_FACT", "SKY_FRAME", "FIND_REQ", "FIND_LIST", "FIND_FOUND", "SKY_EPH", "EPH_REQ",
+      "PREFS", "NEW_PLACE", "R_MOON"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_MENU_ICON",
+          "file": "images/menu_icon.png",
+          "menuIcon": true
+        },
+        {
+          "type": "raw",
+          "name": "SKY_DATA",
+          "file": "data/sky.bin"
+        },
+        {
+          "type": "raw",
+          "name": "CRAFT_DATA",
+          "file": "data/craft.bin"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_MERCURY",
+          "file": "images/planet_mercury.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_VENUS",
+          "file": "images/planet_venus.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_MARS",
+          "file": "images/planet_mars.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_JUPITER",
+          "file": "images/planet_jupiter.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_SATURN",
+          "file": "images/planet_saturn.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_URANUS",
+          "file": "images/planet_uranus.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "PLANET_NEPTUNE",
+          "file": "images/planet_neptune.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        },
+        {
+          "type": "bitmap",
+          "name": "MOON",
+          "file": "images/moon.png",
+          "memoryFormat": "SmallestPalette",
+          "storageFormat": "pbi"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "icon": "resources/images/menu_icon.png",
+  "pictures": [
+    {
+      "name": "mercury",
+      "src": "art/src/mercury.png",
+      "out": "resources/images/planet_mercury.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Mercury_in_true_color.jpg",
+      "credit": "NASA/JHUAPL/Carnegie Institution of Washington (MESSENGER, PIA11364)",
+      "height": 128,
+      "colours": [
+        "555555",
+        "AAAAAA",
+        "AAAA55",
+        "FFFFAA",
+        "FFFFFF"
+      ],
+      "strength": 0.8,
+      "gain": 1.25
+    },
+    {
+      "name": "venus",
+      "src": "art/src/venus.png",
+      "out": "resources/images/planet_venus.png",
+      "from": "https://commons.wikimedia.org/wiki/File:PIA23791-Venus-NewlyProcessedView-20200608.jpg",
+      "credit": "NASA/JPL-Caltech (Mariner 10, PIA23791)",
+      "height": 128,
+      "colours": [
+        "555555",
+        "AAAAAA",
+        "FFFFAA",
+        "FFFFFF",
+        "FFAA55"
+      ],
+      "strength": 0.6,
+      "gain": 1.05
+    },
+    {
+      "name": "mars",
+      "src": "art/src/mars.png",
+      "out": "resources/images/planet_mars.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Mars_Hubble.jpg",
+      "credit": "NASA and the Hubble Heritage Team (STScI/AURA) (Hubble, 2001)",
+      "height": 128,
+      "colours": [
+        "550000",
+        "555555",
+        "AA5500",
+        "FF5500",
+        "FFAA55",
+        "FFFFAA",
+        "FFFFFF"
+      ],
+      "strength": 0.8,
+      "saturation": 1.2
+    },
+    {
+      "name": "jupiter",
+      "src": "art/src/jupiter.png",
+      "out": "resources/images/planet_jupiter.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Jupiter_by_Cassini-Huygens.jpg",
+      "credit": "NASA/JPL/University of Arizona (Cassini, PIA02873)",
+      "height": 128,
+      "colours": [
+        "555555",
+        "AA5500",
+        "AAAA55",
+        "AAAAAA",
+        "FFAA55",
+        "FFAA00",
+        "FFFFAA",
+        "FFFFFF"
+      ],
+      "strength": 0.8,
+      "gain": 1.25,
+      "saturation": 2.6,
+      "gamma": 0.85
+    },
+    {
+      "name": "saturn",
+      "src": "art/src/saturn.png",
+      "out": "resources/images/planet_saturn.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Saturn_from_Cassini_Orbiter_(2004-10-06).jpg",
+      "credit": "NASA/JPL/Space Science Institute (Cassini, PIA06193)",
+      "mask": "shape",
+      "threshold": 28,
+      "width": 188,
+      "colours": [
+        "555555",
+        "555500",
+        "AAAA55",
+        "AAAAAA",
+        "FFAA55",
+        "FFFFAA",
+        "FFFFFF"
+      ],
+      "strength": 0.8,
+      "gain": 1.3,
+      "saturation": 1.2
+    },
+    {
+      "name": "uranus",
+      "src": "art/src/uranus.png",
+      "out": "resources/images/planet_uranus.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Uranus2.jpg",
+      "credit": "NASA/JPL (Voyager 2, PIA18182)",
+      "height": 128,
+      "colours": [
+        "005555",
+        "55AAAA",
+        "55FFFF",
+        "AAFFFF"
+      ],
+      "strength": 0.8
+    },
+    {
+      "name": "neptune",
+      "src": "art/src/neptune.png",
+      "out": "resources/images/planet_neptune.png",
+      "from": "https://commons.wikimedia.org/wiki/File:Neptune_Full_(original).jpg",
+      "credit": "NASA/JPL (Voyager 2, PIA01492)",
+      "height": 128,
+      "colours": [
+        "000055",
+        "0055AA",
+        "0055FF",
+        "5555FF",
+        "55AAFF",
+        "AAAAFF",
+        "FFFFFF"
+      ],
+      "strength": 0.8
+    },
+    {
+      "name": "moon",
+      "src": "art/src/moon.png",
+      "out": "resources/images/moon.png",
+      "from": "https://svs.gsfc.nasa.gov/5587",
+      "credit": "NASA's Scientific Visualization Studio (Moon Phase and Libration 2026, frame 6450)",
+      "height": 112,
+      "colours": [
+        "555555",
+        "AAAAAA",
+        "FFFFFF"
+      ],
+      "strength": 0.8
+    }
+  ]
+}

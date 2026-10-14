@@ -1,0 +1,86 @@
+Pointer Planetarium is MIT licensed (see LICENSE). Some of the data services it uses
+at run time do not allow commercial use (adsb.fi), so Pointer Planetarium itself is
+free, with no ads or purchases. It includes or derives data from:
+
+- Yale Bright Star Catalogue, 5th Revised Edition (Hoffleit and Warren
+  1991), via CDS VizieR catalog V/50. Positions and magnitudes, trimmed to
+  magnitude 5.5 and repacked (src/pkjs/stars_data.js).
+- IAU Catalog of Star Names, IAU Working Group on Star Names (WGSN),
+  released by the IAU under Creative Commons Attribution, as mirrored by
+  E. Mamajek (2022-04-04 edition).
+- Constellation boundaries: N. G. Roman (1987), "Identification of a
+  Constellation from a Position", PASP 99, 695; CDS VizieR catalog VI/42.
+- Constellation stick figures: Marc van der Sluys, ConstellationLines
+  (https://github.com/MarcvdSluys/ConstellationLines,
+  DOI 10.5281/zenodo.10397192), Creative Commons Attribution 4.0
+  International. Modified: matched to this app's star catalog, and lines
+  broken where a star has no position.
+- Star distances: Hipparcos parallaxes (ESA 1997, The Hipparcos and Tycho
+  Catalogues, ESA SP-1200), via CDS VizieR catalog I/239, where good to
+  20%.
+- resources/data/sky.bin, the watch's copy of the stars, names and
+  boundaries, is derived from the three above (tools/make_watch_sky.js).
+- The fun facts (src/pkjs/facts.js) are written for this app; their
+  numbers are from NASA fact sheets, the IAU and aircraft makers' figures.
+- World Magnetic Model 2025, NOAA National Centers for Environmental
+  Information and the British Geological Survey (public domain). The
+  evaluator in src/pkjs/wmm.js is ported from magvar 2.2.0
+  (https://github.com/dpyeates/magvar), MIT License, Copyright (c) 2025
+  Darren Yeates.
+- Planet and Moon positions follow Paul Schlyter, "How to compute planetary
+  positions" (https://stjarnhimlen.se/comp/ppcomp.html), after van Flandern
+  and Pulkkinen (1980). Mercury and Venus magnitudes follow Mallama and
+  Hilton (2018).
+
+- The planet and Moon pictures (resources/images/planet_*.png, moon.png,
+  from the photos in art/src by tools/make_art.py; art/manifest.json links
+  each source) are converted from public domain NASA images: Mercury,
+  NASA/JHUAPL/Carnegie Institution of Washington (MESSENGER, PIA11364);
+  Venus, NASA/JPL-Caltech (Mariner 10, PIA23791); Mars, NASA and the
+  Hubble Heritage Team (STScI/AURA); Jupiter, NASA/JPL/University of
+  Arizona (Cassini, PIA02873); Saturn, NASA/JPL/Space Science Institute
+  (Cassini, PIA06193); Uranus and Neptune, NASA/JPL (Voyager 2, PIA18182
+  and PIA01492); the Moon, NASA's Scientific Visualization Studio (Moon
+  Phase and Libration 2026). Use of these images does not imply NASA's
+  endorsement of this app. The same pictures, as src/pkjs/page_art.js,
+  show on the settings page's logbook.
+
+- Place names in the logbook (src/pkjs/places_data.js, by
+  tools/make_places.py): Natural Earth populated places
+  (https://www.naturalearthdata.com), public domain; trimmed to places of
+  1,000 people or more and repacked.
+
+- Aircraft positions from adsb.lol (https://adsb.lol), Open Database
+  License (ODbL), and adsb.fi (https://adsb.fi), personal non-commercial
+  use. Downloaded by the app at run time; not stored in this repository.
+- Airline, airport, aircraft type and route data: Virtual Radar Server
+  standing data (https://github.com/vradarserver/standing-data), CC0,
+  downloaded by the app at run time.
+- Satellite orbital elements from CelesTrak (https://celestrak.org), drawn
+  from Space-Track.org data, downloaded by the app at run time.
+
+src/pkjs/satellite.min.js is
+satellite.js 6.0.2 (https://github.com/shashwatak/satellite-js), used
+unmodified under the MIT License:
+
+    Copyright (C) 2013 Shashwat Kandadai, UCSC Jack Baskin School of
+    Engineering
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be included
+    in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+    IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+    CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
