@@ -185,6 +185,7 @@ typedef struct AppTimer AppTimer;
 typedef void (*AppTimerCallback)(void *data);
 AppTimer *app_timer_register(uint32_t timeout_ms, AppTimerCallback callback, void *callback_data);
 void app_timer_cancel(AppTimer *timer_handle);
+bool app_timer_reschedule(AppTimer *timer_handle, uint32_t new_timeout_ms);
 uint16_t time_ms(time_t *t_utc, uint16_t *out_ms);
 
 // ---------------------------------------------------------------- storage, resources

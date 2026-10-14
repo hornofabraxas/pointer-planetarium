@@ -8,7 +8,7 @@ enum { L_ANY, L_PLANES, L_SATS, L_PLANETS, L_STARS, L_FIND, L_COUNT };
 // A chart card draws R_CHART, a fact card R_FACT; both follow the answer
 // they are about.
 enum { T_NOTHING, T_PLANE, T_SAT, T_PLANET, T_MOON, T_STAR, T_CONST, T_SUN, T_CHART, T_FACT };
-enum { W_NONE, W_THATS, W_PROBABLY, W_MAYBE };
+enum { W_NONE, W_THATS, W_PROBABLY, W_MAYBE, W_CLOSEST, W_CLOSEST_FAR };
 
 // How something can be seen (matcher.SEE), and Find it's flags on top
 // (find.js): by eye but near the Sun, block it first; too near to find.

@@ -354,7 +354,7 @@ check('first feed errors: the other is asked at once', got.length === 1 && got[0
 var r4 = rig({ lol: 'fail', fi: 'fail' });
 got = [];
 r4.client.get(HOME, PREFS, function (res) { got.push(res); });
-check('both fail: null', got.length === 1 && got[0] === null);
+check('both fail: null, as failed', got.length === 1 && got[0] === null && r4.client.why === 'failed');
 r4.advance(9000);
 check('... and only once', got.length === 1);
 
@@ -363,8 +363,9 @@ got = [];
 r5.client.get(HOME, PREFS, function (res) { got.push(res); });
 r5.client.get(HOME, PREFS, function (res) { got.push(res); });
 check('a second request joins the one in flight', r5.calls.length === 1);
-r5.advance(8001);
-check('nobody answers: null after 8 s, for both callers', got.length === 2 && got[0] === null && got[1] === null);
+r5.advance(P.FEED_TIMEOUT_MS + 1);
+check('nobody answers: null after 15 s, for both callers, as slow', got.length === 2 && got[0] === null &&
+      got[1] === null && r5.client.why === 'slow');
 
 var r6 = rig({ lol: 'fail' });
 r6.client.get(HOME, PREFS, function () {});
@@ -384,6 +385,7 @@ check('a failure is remembered for 10 s (the aim after a failed tap asks nobody)
       r9.calls.length === before && got[0] === null);
 r9.advance(11000);
 r9.client.get(HOME, PREFS, function () {});
+check('every feed resting: null, as resting', r9.client.why === 'resting');
 check('a feed that said 429 is left alone for 10 minutes', r9.calls.length === before, r9.calls.length - before);
 r9.advance(10 * 60000);
 r9.client.get(HOME, PREFS, function () {});
@@ -392,7 +394,7 @@ check('... then asked again', r9.calls.length > before);
 var r10 = rig({ lol: 'hang', fi: 'hang' });
 got = [];
 r10.client.get(HOME, PREFS, function (res) { got.push(res); });
-r10.advance(8001);
+r10.advance(P.FEED_TIMEOUT_MS + 1);
 r10.advance(3000);
 var n10 = r10.calls.length;
 r10.client.get(HOME, PREFS, function (res) { got.push(res); });
@@ -443,8 +445,15 @@ r = M.match(aimAt(target, M.LAYER.PLANES), noon);
 check('no plane data: says so', r.cards[0].type === M.TYPE.NOTHING && r.cards[0].l3 === "Can't reach plane data",
       r.cards[0].l3);
 noon.planes = [];
+noon.planesNote = '';
 r = M.match(aimAt({ az: 200, alt: 40 }, M.LAYER.PLANES), noon);
-check('no plane there', r.cards[0].l3 === 'No plane right there', r.cards[0].l3);
+check('no planes at all: none tracked', r.cards[0].l3 === 'None tracked nearby', r.cards[0].l3);
+noon.planesNote = 'Few planes tracked here';
+r = M.match(aimAt({ az: 200, alt: 40 }, M.LAYER.PLANES), noon);
+check('no planes, thin coverage: says so', r.cards[0].l3 === 'Few planes tracked here', r.cards[0].l3);
+noon.planes = pls;
+r = M.match(aimAt({ az: 200, alt: 40 }, M.LAYER.PLANES), noon);
+check('planes, none there', r.cards[0].l3 === 'No plane right there', r.cards[0].l3);
 
 if (failures) {
   console.log(failures + ' FAILED');

@@ -6,7 +6,8 @@
 // non-commercial use, with a link), or the user's own receiver
 // (tar1090/readsb aircraft.json). Whichever public feed has been faster is
 // asked first; if it hasn't answered in 2.5 s the other is asked too, and
-// the first good answer wins. One answer is reused for 10 s. The location
+// the first good answer wins (or none, after 15 s: abroad, on mobile data,
+// an answer can take several seconds). One answer is reused for 10 s. The location
 // is rounded to 0.01 degree (about 1 km) before it leaves the phone.
 //
 // Standing data (CC0, via jsDelivr), fetched the first time it's needed
@@ -21,7 +22,7 @@ var A = require('./astro.js');
 
 var FEED_REUSE_MS = 10000;
 var FALLBACK_AFTER_MS = 2500;
-var FEED_TIMEOUT_MS = 8000;
+var FEED_TIMEOUT_MS = 15000;
 var MAX_POS_AGE_S = 60;
 var STATS_KEY = 'sf_feedstats_v1';
 var PUBLIC = ['lol', 'fi'];
@@ -59,7 +60,9 @@ function num(v) {
   return typeof v === 'number' && isFinite(v) ? v : null;
 }
 
-// One feed answer -> {t (ms), ac: [...]}, or null. Bad records are
+// One feed answer -> {t (ms), ac: [...], n (aircraft in the answer, with
+// or without a position), stale (left out: no position for a minute)},
+// or null. Bad records are
 // skipped, never fatal. The feed's own clock ("now") dates the positions
 // unless it disagrees with the phone by more than CLOCK_SLACK_MS, or the
 // caller says not to trust it (a home receiver's clock may be off).
@@ -73,13 +76,16 @@ function parseFeed(text, recvMs, trustClock) {
   var now = num(d.now);
   if (now !== null && now < 1e11) now *= 1000;   // receivers give seconds, the APIs ms
   if (trustClock === false || now === null || Math.abs(now - recvMs) > CLOCK_SLACK_MS) now = recvMs;
-  var ac = [];
+  var ac = [], stale = 0;
   list.forEach(function (a) {
     if (!a || typeof a.hex !== 'string') return;
     var lat = num(a.lat), lon = num(a.lon);
     var seen = num(a.seen_pos);
     if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
-    if (seen === null || seen < 0 || seen > MAX_POS_AGE_S) return;
+    if (seen === null || seen < 0 || seen > MAX_POS_AGE_S) {
+      stale++;
+      return;
+    }
     var ground = a.alt_baro === 'ground' || a.ground === true;
     var baro = num(a.alt_baro), geom = num(a.alt_geom);
     if (!ground && baro === null && geom === null) return;
@@ -95,7 +101,7 @@ function parseFeed(text, recvMs, trustClock) {
       posMs: now - seen * 1000
     });
   });
-  return { t: now, ac: ac };
+  return { t: now, ac: ac, n: list.length, stale: stale };
 }
 
 // How long a feed is left alone after it fails: "slow down" or "no" get a
@@ -124,7 +130,21 @@ function FeedClient(opts) {
   this.busy = {};        // feed -> ms its request started
   this.rest = {};        // feed -> ms until which it is left alone
   this.started = {};     // feed -> ms of its last request
+  this.why = '';         // why the last get() had nothing: 'slow', 'failed' or 'resting'
+  this.log = [];         // the last few requests, for diagnostics: {feed, status, ms, n}
 }
+
+// How long the fastest public feed has been taking to answer (a running
+// average; failures count as FEED_TIMEOUT_MS), or null before it's known.
+FeedClient.prototype.typicalMs = function () {
+  var stats = this.store.load(STATS_KEY, {}) || {};
+  var best = null;
+  PUBLIC.forEach(function (id) {
+    var ms = stats[id] ? num(stats[id].ms) : null;
+    if (ms !== null && (best === null || ms < best)) best = ms;
+  });
+  return best;
+};
 
 function safeCall(f, arg) {
   try {
@@ -183,6 +203,7 @@ FeedClient.prototype.get = function (where, prefs, cb) {
   else order = this.ranked();
   order = order.filter(function (id) { return self.free(id); });
   if (!order.length) {
+    this.why = 'resting';
     safeCall(cb, null);   // everything is resting or still busy: don't ask
     return;
   }
@@ -190,10 +211,11 @@ FeedClient.prototype.get = function (where, prefs, cb) {
   var job = { key: key, cbs: [cb], done: false };
   this.pending = job;
   var next = 0, failed = 0;
-  function finish(result) {
+  function finish(result, why) {
     if (job.done) return;
     job.done = true;
     if (self.pending === job) self.pending = null;
+    self.why = result ? '' : why;
     self.last = result || { key: key, t: self.now(), data: null };
     job.cbs.forEach(function (f) { safeCall(f, result); });
   }
@@ -208,6 +230,7 @@ FeedClient.prototype.get = function (where, prefs, cb) {
       var t1 = self.now();
       var data = status === 200 && text ? parseFeed(text, t1, id !== 'rx') : null;
       self.record(id, data ? t1 - t0 : FEED_TIMEOUT_MS);
+      self.log = self.log.concat([{ feed: id, status: status, ms: t1 - t0, n: data ? data.n : null }]).slice(-8);
       if (data) {
         var result = { key: key, t: t1, data: data, feed: id };
         if (job.done) {
@@ -219,7 +242,7 @@ FeedClient.prototype.get = function (where, prefs, cb) {
       } else {
         self.rest[id] = t1 + (status === 403 || status === 429 ? REFUSED_REST_MS : FAILED_REST_MS);
         if (job.done) return;
-        if (++failed >= order.length) finish(null);
+        if (++failed >= order.length) finish(null, 'failed');
         else launch();   // don't wait for the timer: ask the next one now
       }
     });
@@ -227,7 +250,7 @@ FeedClient.prototype.get = function (where, prefs, cb) {
       self.setTimeout(function () { if (!job.done && next < order.length) launch(); }, FALLBACK_AFTER_MS);
     }
   }
-  this.setTimeout(function () { finish(null); }, FEED_TIMEOUT_MS);
+  this.setTimeout(function () { finish(null, 'slow'); }, FEED_TIMEOUT_MS);
   launch();
 };
 
@@ -783,13 +806,16 @@ function baroOffset(acs, baro) {
 //    lat, lon, atMs (where it is, at aimMs), speedMs (ground speed, or null), move ({dx, dy}: degrees a
 //    second across the sky, right and up, or null), craft (CRAFT), strip (route's {from, to, share})}
 // opts: {maxKm, minAboveFt, units}. Only airborne planes above the horizon,
-// in range and above the minimum height come back.
-function positions(feed, aimMs, obs, opts, standing) {
+// in range and above the minimum height come back; drops (optional) counts
+// the others by why: ground, low, below (the horizon), far.
+function positions(feed, aimMs, obs, opts, standing, drops) {
   if (!feed) return [];
   var out = [];
   var o = { lat: obs.lat, lon: obs.lon, h: (obs.altKm || 0) * 1000 };
+  drops = drops || {};
+  function drop(why) { drops[why] = (drops[why] || 0) + 1; }
   feed.ac.forEach(function (a) {
-    if (a.ground) return;
+    if (a.ground) return drop('ground');
     var dt = Math.max(0, Math.min(90, (aimMs - a.posMs) / 1000));
     var pos = { lat: a.lat, lon: a.lon };
     var speed = a.gs !== null ? a.gs * KT : 0;
@@ -797,9 +823,10 @@ function positions(feed, aimMs, obs, opts, standing) {
     var altFt = a.geom !== null ? a.geom : a.baro + baroOffset(feed.ac, a.baro);
     if (a.vrate !== null) altFt += Math.max(-6000, Math.min(6000, a.vrate)) / 60 * Math.min(dt, 30);
     var hM = altFt * FT;
-    if (hM - o.h < (opts.minAboveFt || 0) * FT) return;
+    if (hM - o.h < (opts.minAboveFt || 0) * FT) return drop('low');
     var look = lookAngles(o, { lat: pos.lat, lon: pos.lon, h: hM });
-    if (look.el < -1 || look.range > (opts.maxKm || 50) * 1000) return;
+    if (look.el < -1) return drop('below');
+    if (look.range > (opts.maxKm || 50) * 1000) return drop('far');
     // Where it really is can differ from the dead-reckoned spot: turns and
     // speed changes (5% of the distance moved), the time error, and the
     // position report itself.
@@ -854,6 +881,6 @@ module.exports = {
   FeedClient: FeedClient, Standing: Standing, parseFeed: parseFeed, positions: positions,
   parseCallsign: parseCallsign, csvRows: csvRows, shortAirline: shortAirline, pickTypeName: pickTypeName,
   routeFor: routeFor, legFit: legFit, path: path, CRAFT: CRAFT, typeCraft: typeCraft, craftOf: craftOf, lookAngles: lookAngles, travel: travel, feedUrl: feedUrl,
-  utf8Len: utf8Len, FEED_NAMES: FEED_NAMES, FEED_REUSE_MS: FEED_REUSE_MS, FALLBACK_AFTER_MS: FALLBACK_AFTER_MS,
+  utf8Len: utf8Len, FEED_NAMES: FEED_NAMES, PUBLIC: PUBLIC, FEED_REUSE_MS: FEED_REUSE_MS, FALLBACK_AFTER_MS: FALLBACK_AFTER_MS,
   FEED_TIMEOUT_MS: FEED_TIMEOUT_MS
 };

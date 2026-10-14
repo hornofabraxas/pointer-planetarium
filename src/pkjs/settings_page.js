@@ -317,8 +317,9 @@ function setTab(s) {
 
     '<section><h2>Your aim</h2>' +
     '<p>Everyone points a little differently. Pointer Planetarium learns how you point from the answers it ' +
-    'is sure of (the Moon, planets and stars). To help it along when the Moon is up: on the ' +
-    'watch, open Settings and choose <b>Tune on the Moon</b>.</p>' +
+    'is sure of (the Moon, planets and stars). To help it along: on the watch, open Settings and choose ' +
+    '<b>Tune my aim</b> (it uses the Moon or a bright planet). When an answer says <b>CLOSEST</b>, the ' +
+    'thing you meant was further off than it should be: hold SELECT there to tune on it.</p>' +
     '<ul>' + s.aimLines.join('') + '</ul>' +
     undo('fa', 'Start learning again', 'Both wrists') +
     '</section>' +
@@ -331,7 +332,7 @@ function setTab(s) {
 function aboutTab(s) {
   return '<section><h2>Pointer Planetarium</h2>' +
     '<p>Point at the sky and your watch tells you what\'s there.</p>' +
-    '<p>Sky, gear, theme, screen light, which wrist, and Tune on the Moon are also in the watch\'s ' +
+    '<p>Sky, gear, theme, screen light, which wrist, and Tune my aim are also in the watch\'s ' +
     'Settings: the cog on the home screen, or hold SELECT. <b>Stargazer</b> turns the watch red, which ' +
     'keeps your eyes used to the dark.</p></section>' +
 
@@ -339,6 +340,13 @@ function aboutTab(s) {
     '<p class="note">Everything in the logbook, as a spreadsheet (CSV).</p>' +
     '<textarea id="book" readonly>' + esc(s.logbook.csv || '') + '</textarea>' +
     '<p><button onclick="copyLog(this,\'book\')">Copy logbook</button></p></section>' +
+
+    '<section><h2>Copy diagnostics</h2>' +
+    '<p class="note">Something not working? This is what your last few aims, your location and the ' +
+    'plane data looked like to the app. Your location is rounded to about 100 km. Copy it and paste it ' +
+    'into your message when you ask for help.</p>' +
+    '<textarea id="diag" readonly>' + esc(s.diag || '') + '</textarea>' +
+    '<p><button onclick="copyLog(this,\'diag\')">Copy diagnostics</button></p></section>' +
 
     '<section><h2>Where the data comes from</h2><ul>' + s.credits.map(function (c) {
       return Array.isArray(c) ? '<li><a href="' + esc(c[1]) + '">' + esc(c[0]) + '</a></li>'

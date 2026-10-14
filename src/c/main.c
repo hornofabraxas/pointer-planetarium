@@ -66,7 +66,9 @@
 #define RECORD_BATCHES    (RECORD_MS / 200)   // counted, not timed, so a lagging watch still gets them all
 #define RECORD_MAX_BATCHES 12                 // wait this long for a slow compass
 #define AIM_TIMEOUT_MS    15000
-#define WAIT_TIMEOUT_MS   6000
+#define WAIT_TIMEOUT_MS   6000    // Find it's list; an aim's answer waits longer for slow plane data:
+#define AIM_WAIT_PLANES_MS 12000  // index.js waits up to 9 s in PLANES,
+#define AIM_WAIT_ANY_MS   8000    // ... and 6 s elsewhere
 #define SEND_RETRY_MS     150       // outbox busy (AIM_START still in flight): try again
 #define SEND_TRIES        14
 #define MIN_COMPASS       3
@@ -93,6 +95,7 @@
 #define PERSIST_FRAME   8   // the sky frame from the phone (SKY_FRAME)
 #define PERSIST_PREFS   9   // your sky and gear (s_prefs)
 #define PERSIST_PREFS_PENDING 10   // ... changed on the watch and not yet confirmed by the phone: the change's number
+#define PERSIST_MOVED   11  // gone from one answer to another at least once (no more nudges)
 #define PERSIST_EPH_LEN 19  // the Sun-Moon-planets table from the phone (SKY_EPH): its length,
 #define PERSIST_EPH     20  // then its bytes in 256-byte pieces from here
 
@@ -161,7 +164,9 @@ static const char *LAYER_NAMES[RUNG_COUNT] = { "ANYTHING", "PLANES", "SATELLITES
 static const uint8_t RUNG_ORDER[RUNG_COUNT] = { L_ANY, L_PLANES, L_SATS, L_PLANETS, L_STARS, RUNG_SETTINGS, L_FIND };
 
 // Confidence words (cards.h W_*), as the phone sends them (matcher.js).
-static const char *WORDS[4] = { "", "THAT'S IT", "PROBABLY", "MAYBE" };
+// CLOSEST isn't an answer: the bright thing nearest a miss (W_CLOSEST can
+// be tuned on, W_CLOSEST_FAR can't).
+static const char *WORDS[6] = { "", "THAT'S IT", "PROBABLY", "MAYBE", "CLOSEST", "CLOSEST" };
 
 // The stored numbers (and index.js's) stay as they are: Auto (Stargazer)
 // came last. THEME_ORDER is the order the menu goes through them.
@@ -292,10 +297,10 @@ static Texts *s_tx;
 #define s_msg2 (s_tx->msg2)
 static AppTimer *s_msg_timer, *s_idle_timer;
 
-// First run, Tune on the Moon, the wrist question.
+// First run, Tune my aim, the wrist question.
 static bool s_intro;
 static uint8_t s_intro_step;
-static bool s_tune;                   // Tune on the Moon is in progress
+static bool s_tune;                   // Tune my aim is in progress
 static uint8_t s_tune_n;              // tune aims the phone has accepted
 #define s_tune_tgt (s_tx->tune_tgt)
 #define s_tune_where (s_tx->tune_where)
@@ -323,6 +328,9 @@ static bool s_place_ask;              // the phone says you're somewhere new: as
 static bool s_place_asked;            // ... asked already this time
 static uint64_t s_reveal_start;       // an answer's ring closing in (now_ms(), 0 for none)
 static AppTimer *s_reveal_timer;
+static AppTimer *s_nudge_timer;
+static bool s_moved;                   // PERSIST_MOVED: knows there are more answers
+static bool s_nudged;                  // nudged once since the app started
 
 // The sky frame (find.js SKY_FRAME): where you are, the declination, the
 // finger offset for each wrist, your sky. Kept, so it works with no phone.
@@ -401,6 +409,7 @@ static bool parse_frame(const uint8_t *b, size_t len);
 static int32_t find_wait_s(const FindTarget *t);
 static void motion_reset(void);
 static void motion_start(void);
+static void card_place(void);
 static int menu_rows(void);
 static void find_list_received(const uint8_t *b, int len);
 static bool answer_offline(void);
@@ -1662,7 +1671,7 @@ static void draw_result_head(GContext *ctx, Palette p, int start, int icon_type)
     right = 192 - w;
   }
   uint8_t word = s_cards[start].word;
-  if (word > 0 && word < 4) {
+  if (word > 0 && word < 6) {
     // The answers after the first are what else it might be: "or MAYBE".
     char said[16];
     snprintf(said, sizeof(said), "%s%s", start > first_answer() ? "or " : "", WORDS[word]);
@@ -1710,6 +1719,7 @@ static int answer_visual(int i) {
   if (i != 0 || s_ncards == 0) return VIS_NONE;
   const Card *c = &s_cards[0];
   if (chart_here()) return VIS_CHART;
+  if (c->word >= W_CLOSEST) return VIS_NONE;   // words: how far, which way; its chart is the next page
   if (c->type == T_PLANET && planet_res(c->l1)) return VIS_PHOTO;
   if (c->type == T_MOON && s_have_moon_look) return VIS_MOON;
   if (s_fact_inline) return VIS_FACT;
@@ -1790,9 +1800,9 @@ static void draw_route(GContext *ctx, Palette p, const Chart *ch, int y) {
   graphics_fill_circle(ctx, GPoint(xs, my), 5);
 }
 
-// The last line of an answer's last page, when there's room (the page's
-// own lines end at or above FOOTER_Y): on the first answer's, what else
-// it might be ("or Vega, Sheliak", below); on the last page of all, how
+// The last line of a page, when there's room (the page's own lines end at
+// or above FOOTER_Y): on any of the first answer's pages, what else it
+// might be ("or Vega, Sheliak", below); on the last page of all, how
 // to aim again.
 #define FOOTER_Y       198
 #define FOOTER_W       170       // "or ..." beside its arrow
@@ -1802,8 +1812,8 @@ static void draw_route(GContext *ctx, Palette p, const Chart *ch, int y) {
 static bool footer_text(char *out, int cap, bool *is_or) {
   int fa = first_answer(), first = fa + group_len(fa);   // the first answer's pages end before `first`
   *is_or = false;
-  if (s_tune || s_card != group_start(s_card) + group_len(group_start(s_card)) - 1) return false;
-  if (s_card == first - 1 && s_ncards > first) {
+  if (s_tune) return false;
+  if (group_start(s_card) == fa && s_ncards > first) {   // on any of its pages that has room
     *is_or = true;
     int n = 0;
     const char *names[2] = { NULL, NULL };
@@ -2523,10 +2533,10 @@ static int gear_row(void) {
 }
 
 static void draw_menu(GContext *ctx, Palette p) {
-  const char *labels[MENU_COUNT] = { "Sky", "Gear", "Theme", "Keep light on", "Wrist", "Tune on the Moon" };
+  const char *labels[MENU_COUNT] = { "Sky", "Gear", "Theme", "Keep light on", "Wrist", "Tune my aim" };
   const char *values[MENU_COUNT] = { SKY_NAMES[sky_code()], GEAR_NAMES[gear_row()], THEME_NAMES[s_theme],
                                      LIGHT_NAMES[light_mode()], s_wrist ? "Right" : "Left",
-                                     s_moon_tgt[0] ? "Moon is up" : "Moon not up" };
+                                     s_moon_tgt[0] ? s_moon_tgt : "Nothing up now" };
   ListGeom g;
   list_geom(&g);
   int sc = list_scroll(&g);
@@ -2640,6 +2650,40 @@ static void draw_msg(GContext *ctx, Palette p) {
   text(ctx, s_msg2, FONT_KEY_GOTHIC_24_BOLD, GRect(4, 136, 192, 60), p.dim, GTextAlignmentCenter);
 }
 
+// That there are more answers: a rail down the right edge (the one strip
+// no page draws on), a mark per answer, this one's bright and wider. This
+// answer's other pages are the dots in its band.
+#define RAIL_TOP 42
+#define RAIL_LEN 184
+#define RAIL_GAP 4
+static void draw_page_cue(GContext *ctx, Palette p) {
+  int n = group_count(), k = group_index(group_start(s_card));
+  if (n < 2) return;
+  int seg = (RAIL_LEN - (n - 1) * RAIL_GAP) / n;
+  for (int i = 0; i < n; i++) {
+    graphics_context_set_fill_color(ctx, i == k ? p.accent : p.line);
+    graphics_fill_rect(ctx, GRect(i == k ? 195 : 196, RAIL_TOP + i * (seg + RAIL_GAP), i == k ? 5 : 3, seg), 1,
+                       GCornersAll);
+  }
+}
+
+// Once, the first time there are more answers than the first and the user
+// hasn't yet gone to another: after a few seconds untouched, the answer
+// hops up and settles back, the next one showing under it for a moment.
+#define NUDGE_AFTER_MS 3000
+#define NUDGE_PX       44
+static void nudge_cb(void *ctx) {
+  s_nudge_timer = NULL;
+  if (!s_canvas || s_moved || s_nudged || s_screen != SCR_RESULTS || s_card != first_answer() || s_card_off || s_tune ||
+      group_count() < 2) return;
+  s_nudged = true;
+  s_card_across = false;
+  s_card_off = -NUDGE_PX;
+  s_card_to = 0;
+  card_place();
+  motion_start();
+}
+
 static void canvas_update(Layer *layer, GContext *ctx) {
   Palette p = palette();
   graphics_context_set_fill_color(ctx, p.bg);
@@ -2650,6 +2694,7 @@ static void canvas_update(Layer *layer, GContext *ctx) {
     case SCR_WAIT: draw_wait(ctx, p); break;
     case SCR_RESULTS:
       draw_results(ctx, p);
+      if (!s_tune) draw_page_cue(ctx, p);
       draw_reveal(ctx, p);   // on top of it all
       break;
     case SCR_COACH: draw_coach(ctx, p); break;
@@ -2768,6 +2813,8 @@ static void reveal_cb(void *ctx) {
 
 static void reveal_start(void) {
   s_reveal_start = now_ms();
+  if (s_nudge_timer) app_timer_cancel(s_nudge_timer);
+  s_nudge_timer = !s_moved && !s_nudged ? app_timer_register(NUDGE_AFTER_MS, nudge_cb, NULL) : NULL;
   if (!s_reveal_timer) s_reveal_timer = app_timer_register(REVEAL_FRAME_MS, reveal_cb, NULL);
 }
 
@@ -3880,7 +3927,7 @@ static void send_aim(void *ctx) {
     return;
   }
   if (s_wait_timer) app_timer_cancel(s_wait_timer);
-  s_wait_timer = app_timer_register(WAIT_TIMEOUT_MS, wait_timer_cb, NULL);
+  s_wait_timer = app_timer_register(s_layer == L_PLANES ? AIM_WAIT_PLANES_MS : AIM_WAIT_ANY_MS, wait_timer_cb, NULL);
 }
 
 static void aim_timer_cb(void *ctx) {
@@ -4179,7 +4226,7 @@ static void choice_back(void) {
 
 static void start_session(void) {
   if (!s_moon_tgt[0]) {
-    show_msg("The Moon isn't up", "or is too low or high");
+    show_msg("Nothing to tune on", "No Moon or bright planet");
     return;
   }
   strncpy(s_tune_tgt, s_moon_tgt, sizeof(s_tune_tgt) - 1);
@@ -4233,6 +4280,7 @@ static void idle_arm(void) {
 static void bump_idle(void) {
   idle_arm();
   light_read_more();
+  if (s_nudge_timer) app_timer_reschedule(s_nudge_timer, NUDGE_AFTER_MS);   // "untouched" starts again
 }
 
 // The next rung on (dir +1 up the ladder), round from one end to the other.
@@ -4261,10 +4309,23 @@ static int wrap(int i, int n) {
   return n > 0 ? ((i % n) + n) % n : 0;
 }
 
-// UP (-1) and DOWN (+1) on a list: the answers and their pages in turn,
-// the menu's rows, the Find it list; round from the end to the start.
+static int card_next(int dir, bool across);
+
+// The user went to another answer: they know there are more (no nudges).
+static void note_moved(void) {
+  if (s_moved) return;
+  s_moved = true;
+  persist_write_bool(PERSIST_MOVED, true);
+}
+
+// UP (-1) and DOWN (+1) on a list: the answers (as a drag up or down goes:
+// an answer's other pages are a sideways drag), the menu's rows, the Find
+// it list; round from the end to the start.
 static void list_step(int dir) {
-  if (s_screen == SCR_RESULTS) s_card = wrap(s_card + dir, s_ncards);
+  if (s_screen == SCR_RESULTS) {
+    s_card = card_next(dir, false);
+    note_moved();
+  }
   else if (s_screen == SCR_MENU) s_menu_row = wrap(s_menu_row + dir, menu_rows());
   else if (s_screen == SCR_PICK) s_pick_row = wrap(s_pick_row + dir, s_nrows);
   else if (s_screen == SCR_CHOICE) s_choice_row = wrap(s_choice_row + dir, 3);
@@ -4422,7 +4483,7 @@ static void select_click(ClickRecognizerRef rec, void *ctx) {
         app_timer_cancel(s_msg_timer);
         s_msg_timer = NULL;
       }
-      // On the Settings rung (and a message over it, "The Moon isn't up")
+      // On the Settings rung (and a message over it, "Nothing to tune on")
       // SELECT opens the menu rather than aiming.
       if (s_layer == RUNG_SETTINGS && !s_tune && (s_screen == SCR_HOME || s_screen == SCR_MSG)) {
         s_menu_row = 0;
@@ -4440,10 +4501,14 @@ static void select_click(ClickRecognizerRef rec, void *ctx) {
 
 // A press held past the long-click time swallows the single click, so
 // outside Home and Results a long press does what a tap would. Results
-// opens the menu too: a "nothing there" card can suggest Tune on the Moon.
+// opens the menu too: a "nothing there" card can suggest Tune my aim. On
+// a CLOSEST card that can be tuned on, it tunes on that card's object at
+// once (the phone sent it as the target, TUNE_TGT, with the answer).
 static void select_long(ClickRecognizerRef rec, void *ctx) {
   bump_idle();
-  if (s_screen == SCR_HOME || (s_screen == SCR_RESULTS && !s_tune)) {
+  if (s_screen == SCR_RESULTS && !s_tune && s_cards[group_start(s_card)].word == W_CLOSEST) {
+    start_session();
+  } else if (s_screen == SCR_HOME || (s_screen == SCR_RESULTS && !s_tune)) {
     s_menu_row = 0;
     go(SCR_MENU);
   } else {
@@ -4576,6 +4641,7 @@ static int card_next(int dir, bool across) {
 // The answer dir answers on (+1 the next), at its first page.
 static void answer_step(int dir) {
   bump_idle();
+  note_moved();
   s_card = card_next(dir, false);
   layer_mark_dirty(s_canvas);
 }
@@ -4942,6 +5008,16 @@ static void shot_card(int i, int type, int word, const char *a, const char *b, c
   strncpy(s_cards[i].hint, h, 31);
 }
 
+#if SKY_SHOT == 85
+// The nudge part way, held there for the picture (once the window is up).
+static void shot_nudge_cb(void *ctx) {
+  s_card_off = s_card_to = -NUDGE_PX;
+  card_place();
+  layer_mark_dirty(s_canvas);
+  if (s_peek) layer_mark_dirty(s_peek);
+}
+#endif
+
 static void shot_seed(void) {
   s_intro = false;
   s_screen = SCR_HOME;
@@ -5301,6 +5377,56 @@ static void shot_seed(void) {
   s_ncards = 3;
   s_theme = SKY_SHOT == 57 ? THEME_NIGHT : SKY_SHOT == 58 ? THEME_DAY : THEME_STAR;
   s_screen = SCR_RESULTS;
+#elif SKY_SHOT == 80 || SKY_SHOT == 85
+  // A planet's photo with more answers after it (the cue at the bottom),
+  // and (85) the nudge part way, the next answer showing under it.
+  strncpy(s_fact, "With a small telescope you can see the rings of Saturn.", FACT_MAX - 1);
+  shot_card(0, T_PLANET, 2, "Saturn", "Planet", "Bright", "Higher and right");
+  shot_card(1, T_FACT, 0, "Did you know?", "", "", "");
+  shot_card(2, T_STAR, 3, "Alpherg", "in Pisces", "Very faint", "Lower and left");
+  shot_card(3, T_STAR, 3, "A star", "in Pisces", "Very faint", "Lower and right");
+  s_ncards = 4;
+  s_theme = THEME_NIGHT;
+  s_screen = SCR_RESULTS;
+#if SKY_SHOT == 85
+  app_timer_register(500, shot_nudge_cb, NULL);
+#endif
+#elif SKY_SHOT == 81 || SKY_SHOT == 82
+  // CLOSEST: 14 degrees off Saturn (Phoenix, 15 Oct 2026 04:00 UTC, as
+  // test/pkjs.test.js), then its chart: the aim marked, Saturn circled.
+  static const uint8_t closest_sat[] = {
+    7, 128, 128, 15, 190, 194, 1, 106, 61, 1, 144, 188, 1, 179, 144, 0, 125, 194, 0, 42, 121, 0, 0, 0, 1, 68, 103 };
+  s_chart_len = sizeof(closest_sat);
+  memcpy(s_chart, closest_sat, s_chart_len);
+  shot_card(0, T_PLANET, W_CLOSEST, "Saturn", "14 degrees off", "Meant it? Hold SELECT", "Further right");
+  shot_card(1, T_CHART, 0, "Where you pointed", "Saturn is circled", "", "");
+  shot_card(2, T_STAR, 3, "Alpherg", "in Pisces", "Very faint", "Lower and left");
+  s_ncards = 3;
+  s_card = SKY_SHOT == 82 ? 1 : 0;
+  s_theme = THEME_NIGHT;
+  s_screen = SCR_RESULTS;
+#elif SKY_SHOT == 83
+  // Settings, on Tune my aim: what it would tune on now.
+  strncpy(s_moon_tgt, "Saturn", sizeof(s_moon_tgt) - 1);
+  s_menu_row = MENU_TUNE;
+  s_screen = SCR_MENU;
+#elif SKY_SHOT == 84
+  // Tune my aim on a CLOSEST card's planet.
+  strncpy(s_tune_tgt, "Saturn", sizeof(s_tune_tgt) - 1);
+  strncpy(s_tune_where, "halfway up in the SE", sizeof(s_tune_where) - 1);
+  s_tune = true;
+  s_tune_n = 0;
+  s_screen = SCR_TUNE;
+#elif SKY_SHOT == 86
+  // Home on PLANES where the feeds barely reach.
+  strncpy(s_status[L_PLANES], "Few planes tracked here", 31);
+  s_layer = L_PLANES;
+#elif SKY_SHOT == 87
+  // PLANES, and the plane data didn't come in time.
+  shot_card(0, T_NOTHING, 0, "Nothing I know", "is there", "Plane data too slow", "");
+  s_ncards = 1;
+  s_theme = THEME_NIGHT;
+  s_screen = SCR_RESULTS;
 #elif SKY_SHOT == 60 || SKY_SHOT == 61 || SKY_SHOT == 62
   // A planet's chart card with its ground: Saturn low in the east, 11 Oct
   // 2026 6:30 pm in Phoenix, near Pegasus (chart.js through addExtras).
@@ -5400,6 +5526,7 @@ static bool init(void) {
   s_daylight = persist_exists(PERSIST_DAY) ? persist_read_bool(PERSIST_DAY) : true;
   s_seq = persist_exists(PERSIST_SEQ) ? (uint16_t)persist_read_int(PERSIST_SEQ) : 0;
   s_intro = !persist_exists(PERSIST_INTRO);
+  s_moved = persist_read_bool(PERSIST_MOVED);
   uint8_t frame[19];
   if (persist_exists(PERSIST_FRAME) && persist_read_data(PERSIST_FRAME, frame, sizeof(frame)) == (int)sizeof(frame) &&
       parse_frame(frame, sizeof(frame))) {

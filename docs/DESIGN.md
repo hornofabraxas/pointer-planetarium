@@ -42,7 +42,7 @@ What we know from testing:
 | Compass coach | (ignored) | (ignored) | Skip | Home |
 
 Long-press SELECT on Home opens the small watch menu (sky, gear, theme,
-keep light on, wrist, "Tune on the Moon"). Everything else lives on the phone settings page.
+keep light on, wrist, "Tune my aim"). Everything else lives on the phone settings page.
 
 ### 2.2 Layers: the sky ladder
 
@@ -551,9 +551,12 @@ watch sits on your wrist or how you point. The app learns that itself
 2. **The offset** is the median of the last 20 samples, once there are 5
    (the default until then). Recent samples win, so a recalibrated compass
    is followed.
-3. **Tune on the Moon** (watch menu, when the Moon is 15 to 65 degrees up
-   and clear of the Sun): three aims at the Moon. Most people can't find a
-   named star on request; everyone can find the Moon. If its offset beats
+3. **Tune my aim** (watch menu): three aims at the Moon when it's 15 to 65
+   degrees up and clear of the Sun, else at the brightest planet that is.
+   Most people can't find a named star on request; everyone can find the
+   Moon or Jupiter. A CLOSEST answer (the bright thing nearest a miss,
+   matcher.js) offers a tune on that object, star or not: holding SELECT
+   on it says that's what was meant. If its offset beats
    the current one on those aims (each scored leaving itself out), the
    samples restart from the Moon's three, which count from the start; if
    not, they join the rest.
@@ -777,3 +780,27 @@ the list's Sun limits kept. The full Starlink catalog (a server caching
 CelesTrak's starlink group, since per-phone downloads of it are rate
 limited per address) is skipped for now; new trains already come from
 last-30-days.
+
+## 11. Shelved ideas
+
+Kept for later, from the first outside user's report (2026-10-14: Saturn
+answered "nothing there" two times in three; a landing plane not in the
+plane data; extra answers not found).
+
+- **Wider aim error where the compass is weaker.** The watch's compass
+  reads the horizontal part of the Earth's field, and that is weaker over
+  most of Europe and northern Asia (Moscow 0.70 of Phoenix's, Helsinki
+  0.62, Berlin 0.79; `wmm.field().h` already gives it). The same small
+  compass faults then throw the heading further off. Widening sigma (and
+  MAX_SEARCH) by about sqrt(H at Phoenix / H here) would follow from that,
+  but it's a guess until diagnostics from abroad show the misses. CLOSEST
+  (matcher.js) covers the worst of it meanwhile.
+- **Saying when the location is stale.** With no fresh fix the phone uses
+  the last one saved, however old, without saying so (`answerAim` checks
+  only that there is one). Older than a day: "Using where you were 3 days
+  ago", and why (location off, or it timed out). The diagnostics now note
+  the fix's age and the last location error.
+- **A "Could be" list** as the first card when the top answer is only
+  MAYBE: two or three candidates and how far each is from the aim. Costs
+  the most watch space; wait to see whether CLOSEST and the "more answers"
+  cue are enough.

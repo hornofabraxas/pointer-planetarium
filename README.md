@@ -98,12 +98,17 @@ the phone.
 - **A plane** shows its route between airports, its shape, its height and
   distance, and its speed and direction.
 - **Not sure?** The answer says what else it might be ("or Vega").
+- **Missed?** If nothing is close to where you pointed, the answer is the
+  bright thing nearest your aim, marked **CLOSEST** ("Saturn, 14 degrees
+  off"), with a chart of where you pointed and where it is. If that's what
+  you meant, hold SELECT to tune your aim on it.
 - **Did you know?** The last page is a fun fact. Point at the same thing
   again and you get a different one.
 
-Drag up or down (or press UP and DOWN) to go through the other things near
-where you pointed. Drag left or right for an answer's pages. Tap (or
-SELECT) to point again.
+When there's more than one answer, a rail down the right edge has a mark
+for each, the one you're on lit up. Drag up or down (or press UP and DOWN)
+to go from one to the next. The dots at the top are an answer's own
+pages: drag left or right for those. Tap (or SELECT) to point again.
 
 ## The sky ladder
 
@@ -207,7 +212,7 @@ The menu (the SETTINGS rung, or hold SELECT on the home screen) has:
   on in daylight or if you've turned the light off, and lets go at 20%
   battery.
 - **Wrist**: left or right.
-- **Tune on the Moon** (see below).
+- **Tune my aim** (see below).
 
 When you open the app after dark more than about 30 miles from where you
 last set your sky, it asks "Where are you now?" once.
@@ -246,8 +251,9 @@ the wrist. Each time the app is sure about the Moon, a planet or a star,
 it notes how far off your finger was. After 5 of those it corrects your
 aim for that wrist.
 
-**Tune on the Moon** (in the menu, when the Moon is up) speeds this up:
-point at the Moon three times.
+**Tune my aim** (in the menu) speeds this up: point three times at the
+Moon, or at a bright planet when there's no Moon. A **CLOSEST** answer
+offers the same for whatever you just missed: hold SELECT on it.
 
 If two aims in a row point into the ground but would point at the sky from
 your other wrist, the watch asks whether it's on the wrist you said, and
@@ -264,8 +270,11 @@ Planes, satellites, charts and fun facts need the phone.
 
 - **Planes:** an aim in PLANES or ANYTHING sends your location, rounded
   to about half a mile (1 km), to the plane data service (adsb.lol or
-  adsb.fi). Turn planes off in the settings and your location never leaves
-  your phone.
+  adsb.fi). If it finds no aircraft at all, the same service is asked once
+  more, at most once an hour, about a wider area around the same rounded
+  point, to tell an empty sky from a place it barely covers. Turn planes
+  off in the settings and your location never leaves your phone.
+- **Diagnostics** stay on your phone until you copy them yourself.
 - **Satellites and plane names** are downloaded without your location.
 - **Your location** is also kept on the watch so it can work without the
   phone. It stays on the watch.
@@ -291,8 +300,15 @@ app learns your aim to do better.
   sky is dark, usually an hour or two after sunset or before sunrise.
   Satellite data downloads at most once a day, so the first time needs a
   connection.
-- **Answers keep coming back unsure?** Try **Tune on the Moon**, and check
-  the watch knows which wrist it's on.
+- **Answers keep coming back unsure, or CLOSEST?** Try **Tune my aim**,
+  and check the watch knows which wrist it's on.
+- **No planes?** The PLANES line on the home screen says why: "Plane data
+  too slow" or "Can't reach plane data" (your connection, or the service),
+  "Few planes tracked here" (the volunteer receivers behind the plane data
+  don't cover everywhere), or "None tracked nearby".
+- **Something not working?** On the phone settings page, About, **Copy
+  diagnostics** gives what your last few aims, your location (rounded to
+  about 60 miles) and the plane data looked like, to paste into a message.
 - **Wrong planes?** Planes move fast. Aim at them and hold steady, and the
   app moves each one forward to the moment you pointed.
 

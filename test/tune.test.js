@@ -118,9 +118,19 @@ var fw = tune.fit(wild), fs = tune.fit(samples);
 check('median shrugs off one wild aim', Math.abs(fw.yaw - fs.yaw) < 3 && Math.abs(fw.pitch - fs.pitch) < 3,
       fw.yaw.toFixed(1) + '/' + fw.pitch.toFixed(1) + ' vs ' + fs.yaw.toFixed(1) + '/' + fs.pitch.toFixed(1));
 
-// Tuning is Moon-only now: at night with no Moon there's nothing to tune on.
-check('pick: the Moon only (none on a moonless night)', tune.pick(night, PHX.lat, PHX.lon) === null &&
-      tune.pick(day, PHX.lat, PHX.lon).id === 'moon');
+// The Moon first; with no Moon, the brightest planet, never a star unless
+// asked for (a CLOSEST card's target), and only while it's good to tune on.
+var nightPick = tune.pick(night, PHX.lat, PHX.lon);
+check('pick: the Moon by day', tune.pick(day, PHX.lat, PHX.lon).id === 'moon');
+check('pick: a planet on a moonless night, not a star', nightPick && nightPick.type === matcher.TYPE.PLANET,
+      nightPick && nightPick.name);
+var nightStar = nightAll.filter(function (t) { return t.type === matcher.TYPE.STAR; })[0];
+check('pick: a star when a CLOSEST card asked for it', nightStar &&
+      tune.pick(night, PHX.lat, PHX.lon, null, nightStar.id).id === nightStar.id, nightStar && nightStar.name);
+check('pick: an asked-for target that has set falls back', tune.pick(day, PHX.lat, PHX.lon, null, 'star:0').id === 'moon');
+check('idFor: Moon, planet, star, and not a plane', tune.idFor({ kind: 'moon' }) === 'moon' &&
+      tune.idFor({ kind: 'planet', id: 'saturn' }) === 'saturn' && tune.idFor({ kind: 'star', index: 12 }) === 'star:12' &&
+      tune.idFor({ kind: 'plane' }) === null);
 
 // Learning from sure answers: someone whose finger sits at yaw 14, pitch 0
 // (5 degrees from the default) points at stars round the sky with 2.5

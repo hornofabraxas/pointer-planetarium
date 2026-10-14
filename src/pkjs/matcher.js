@@ -5,6 +5,7 @@
 // likely a person is to point at it (visible now, bright). A constant
 // "nothing there" term keeps the answer honest when nothing is close.
 // Probabilities become words (THAT'S / PROBABLY / MAYBE), never numbers.
+// When nothing is sure, the nearest bright thing is offered as CLOSEST.
 // See docs/DESIGN.md section 4.
 
 var A = require('./astro.js');
@@ -13,7 +14,9 @@ var stars = require('./stars.js');
 var LAYER = { ANY: 0, PLANES: 1, SATELLITES: 2, PLANETS: 3, STARS: 4, FIND: 5 };
 var TYPE = { NOTHING: 0, PLANE: 1, SATELLITE: 2, PLANET: 3, MOON: 4, STAR: 5,
              CONSTELLATION: 6, SUN: 7, CHART: 8, FACT: 9 };
-var WORD = { NONE: 0, THATS: 1, PROBABLY: 2, MAYBE: 3 };
+// CLOSEST: the bright thing nearest a miss, which Tune my aim can use;
+// CLOSEST_FAR: the same, but it can't be tuned on now (index.js decides).
+var WORD = { NONE: 0, THATS: 1, PROBABLY: 2, MAYBE: 3, CLOSEST: 4, CLOSEST_FAR: 5 };
 
 // Tuning knobs (section 4.4: field logs will move these).
 var SIGMA_REF = 4;          // degrees; scores are relative to a 4 degree aim
@@ -28,6 +31,14 @@ var MAX_PER_TYPE = 3;       // in ANYTHING, so one kind can't fill the list
 var SUN_WARNING_DEG = 20;
 var DARK_SUN = -6;          // satellites show only once the Sun is this far down
 var SAT_MAG_SLACK = 1;      // satellite brightness is a rough estimate: be generous
+// Nothing (or only a MAYBE) where you pointed: the bright thing nearest the
+// aim, out to this far, is offered as CLOSEST ("Saturn, 14 degrees off").
+// People point at what they can see, so a miss this big is far likelier a
+// pointing error than an aim at empty sky; the card can start a tune on it.
+var CLOSEST_DEG = 25;
+var CLOSEST_SIGMA = 10;     // nearer beats brighter, but not by much
+var CLOSEST_MAG = 1.5;      // the Moon, the bright planets, the brightest stars
+var CLOSEST_LEAD_MAG = 2;   // this much brighter than a MAYBE, and CLOSEST goes first
 
 // How faint a star can be and still be seen, from the Sun's altitude and
 // the user's sky (city / suburbs / dark).
@@ -269,8 +280,23 @@ function match(aim, sky, knobs) {
     cards.push({ type: o.type, word: wordFor(o.p), l1: o.l1, l2: o.l2, l3: o.l3,
                  hint: o.moving ? motionHint(o.speedMs, o.move, sky.units)
                                 : offsetHint(aimTrue, { az: o.az, alt: o.altTrue }, o.d), p: o.p, name: o.name,
-                 az: o.az, alt: o.alt, visible: o.visible, ref: o.ref || null });
+                 az: o.az, alt: o.alt, visible: o.visible, ref: o.ref || null, mag: o.mag });
   });
+
+  var listed = cards.filter(function (c) { return c.type !== TYPE.SUN; });
+  var weak = !listed.length || listed[0].word === WORD.MAYBE;
+  if (weak && aimTrue.alt > 0 && (wantPlanets || wantStars) && cards.length < MAX_CARDS) {
+    var near = closestBright(aimTrue, sky, wantPlanets, wantStars, limit);
+    if (near && !listed.some(function (c) { return c.name === near.name; })) {
+      // Far brighter than the faint MAYBE where you pointed: that's what
+      // you meant, more likely than not, so it comes first.
+      var lead = listed.length && near.mag <= listed[0].mag - CLOSEST_LEAD_MAG;
+      cards.splice(lead ? cards.indexOf(listed[0]) : cards.length, 0, { type: near.type, word: WORD.CLOSEST, l1: near.name, l2: Math.round(near.d) + ' degrees off',
+                   l3: '', hint: offsetHint(aimTrue, { az: near.az, alt: near.altTrue }, near.d), p: 0,
+                   name: near.name, az: near.az, alt: near.alt, visible: true, ref: near.ref, d: near.d,
+                   mag: near.mag });
+    }
+  }
 
   var found = cards.some(function (c) { return c.type !== TYPE.SUN; });
   if (!found) {
@@ -285,7 +311,8 @@ function match(aim, sky, knobs) {
       var night = sky.sunAlt < -6 && aimTrue.alt > 0;
       var l3 = night ? 'Pointing into ' + conName : 'Point again, hold still';
       if (aim.layer === LAYER.PLANES) {
-        l3 = sky.planes ? 'No plane right there' : sky.planesNote || "Can't get plane data";
+        l3 = sky.planes ? (sky.planes.length ? 'No plane right there' : sky.planesNote || 'None tracked nearby')
+                        : sky.planesNote || "Can't get plane data";
       }
       if (aim.layer === LAYER.SATELLITES) {
         if (!sky.sats) l3 = sky.satsNote || 'No satellite data yet';
@@ -301,7 +328,48 @@ function match(aim, sky, knobs) {
 
   var top = null;
   cards.forEach(function (c) { if (!top && c.type !== TYPE.SUN && c.p > 0) top = c; });
+  // A CLOSEST card isn't an answer (top stays null): it says where the
+  // nearest bright thing is, and asks whether that was meant.
   return { cards: cards, top: top };
+}
+
+// The bright thing (CLOSEST_MAG or brighter, easy to see now) nearest the
+// aim (true), within CLOSEST_DEG: {type, name, az, altTrue, alt, mag, d,
+// ref}, or null. Nearer wins over brighter, gently.
+function closestBright(aimTrue, sky, planets, starsToo, limit) {
+  var best = null;
+  function offer(o) {
+    if (o.alt <= 0 || o.mag > CLOSEST_MAG || o.mag + extinction(o.alt) > limit) return;
+    var d = A.separation(aimTrue.az, aimTrue.alt, o.az, o.altTrue);
+    if (!(d <= CLOSEST_DEG)) return;
+    o.d = d;
+    o.score = Math.pow(10, -0.4 * BRIGHTNESS_SLOPE * Math.max(-2, o.mag)) *
+              Math.exp(-d * d / (2 * CLOSEST_SIGMA * CLOSEST_SIGMA));
+    if (!best || o.score > best.score) best = o;
+  }
+  if (planets) {
+    var m = sky.moon;
+    if (moonSeeing(m, sky.sunAlt, sky.sky) === SEE.EASY) {
+      offer({ type: TYPE.MOON, name: 'Moon', az: m.az, altTrue: m.altTrue, alt: m.alt, mag: Math.min(m.mag, -2),
+              ref: { kind: 'moon', illum: m.illum, waxing: m.waxing, distKm: m.distKm } });
+    }
+    sky.bodies.slice(1).forEach(function (b) {
+      offer({ type: TYPE.PLANET, name: b.name, az: b.az, altTrue: b.altTrue, alt: b.alt, mag: b.mag,
+              ref: { kind: 'planet', id: b.id, name: b.name, distAU: b.distAU, lit: b.lit } });
+    });
+  }
+  if (starsToo) {
+    var eq = A.horizonToEq(aimTrue.az, aimTrue.alt, sky.jd, sky.lat, sky.lon);
+    stars.starsNear(eq.ra, eq.dec, sky.jd, CLOSEST_DEG).forEach(function (n) {
+      var s = n.star;
+      if (!s.name || s.mag > CLOSEST_MAG) return;
+      var h = A.eqToHorizon(s.ra, s.dec, sky.jd, sky.lat, sky.lon);
+      offer({ type: TYPE.STAR, name: s.name, az: h.az, altTrue: h.alt, alt: h.alt + A.refraction(h.alt), mag: s.mag,
+              ref: { kind: 'star', index: s.index, name: s.name, con: stars.constellationAt(s.ra, s.dec, sky.jd),
+                     ly: stars.distances[s.index] } });
+    });
+  }
+  return best;
 }
 
 // Members of one satellite train near the aim become a single card: their
@@ -383,4 +451,5 @@ function layerStatus(sky) {
 module.exports = { NONE_WEIGHT: NONE_WEIGHT, BRIGHTNESS_SLOPE: BRIGHTNESS_SLOPE, extinction: extinction,
                    match: match, layerStatus: layerStatus, limitingMag: limitingMag, satsUp: satsUp,
                    seeing: seeing, moonSeeing: moonSeeing, moonPhase: moonPhase, motionHint: motionHint, MIN_SHOWN: MIN_SHOWN,
+                   CLOSEST_DEG: CLOSEST_DEG,
                    SEE: SEE, LAYER: LAYER, TYPE: TYPE, WORD: WORD };

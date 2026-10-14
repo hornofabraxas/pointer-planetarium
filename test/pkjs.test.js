@@ -426,7 +426,7 @@ atTime(newMoonT, function () {
 });
 var none = sent.filter(function (m) { return m.R_SEQ === 44; })[0];
 check('tune with no Moon: told so, and stopped', none && none.TUNE_N === 255 &&
-      /Moon isn't up/.test(none.R_DATA), none && none.R_DATA);
+      /Nothing to tune on/.test(none.R_DATA), none && none.R_DATA);
 handlers.showConfiguration();
 var aimHtml = decodeURIComponent(opened.replace('data:text/html;charset=utf-8,', ''));
 check('settings page shows what was learned', /Left wrist: learned from the last 4 answers \(3 from the Moon\)/.test(aimHtml) &&
@@ -685,9 +685,54 @@ check('ticker quiet when nothing changed', sent.length === 0, sent.length + ' se
 
 global.setInterval = realSetInterval;
 
+// A miss too big for an answer: the bright thing nearest the aim comes
+// back as CLOSEST, with a chart of the aim and it, and hold SELECT tunes
+// on it (TUNE_TGT names it, as the card does). Default offset for this.
+var savedPool = store.sf_aim_v2;
+delete store.sf_aim_v2;
+var satT = Date.UTC(2026, 9, 15, 4, 0, 0);   // Saturn about 42 degrees up in the SE
+var planetsMod = require('../src/pkjs/planets.js');
+var sat = planetsMod.bodies(new Date(satT), 33.49, -111.99).filter(function (b) { return b.id === 'saturn'; })[0];
+var wmmMod = require('../src/pkjs/wmm.js');
+var declS = wmmMod.field(33.49, -111.99, 0.379, new Date(satT)).declination;
+var rS = require('./helpers.js').rawAt(sat.az - 14 / A.cosd(sat.alt), sat.alt, declS);
+sent = [];
+atTime(satT, function () {
+  handlers.appmessage({ payload: { A_SEQ: 60, A_T: Math.floor(satT / 1000), A_MS: 0, A_HEAD: Math.round(rS.head * 100),
+                                   A_JIT: 50, A_AX: rS.ax, A_AY: rS.ay, A_AZ: rS.az, A_CAL: 2, A_NC: 8, A_LAYER: 3,
+                                   A_WRIST: 0 } });
+});
+var rc = sent.filter(function (m) { return m.R_SEQ === 60; })[0];
+var rcCards = rc ? rc.R_DATA.split('\x1e').map(function (c) { return c.split('\x1f'); }) : [];
+check('14 degrees off Saturn: CLOSEST Saturn, offered for tuning', rcCards[0] && rcCards[0][1] === '4' &&
+      rcCards[0][2] === 'Saturn' && /Hold SELECT/.test(rcCards[0][4]) && /^Saturn\x1f/.test(rc.TUNE_TGT || ''),
+      rc && rc.R_DATA.split('\x1f').join('/'));
+check('... then its chart: where you pointed, Saturn circled', rcCards[1] && rcCards[1][0] === '8' &&
+      rcCards[1][2] === 'Where you pointed' && rc.R_CHART && rc.R_CHART.length > 10, rcCards[1] && rcCards[1].join('/'));
+check('... not noted in the logbook', !/saturn/i.test(store.sf_logbook_v1 || ''));
+sent = [];
+atTime(satT + 5000, function () {
+  handlers.appmessage({ payload: { A_SEQ: 61, A_T: Math.floor(satT / 1000) + 5, A_MS: 0, A_HEAD: Math.round(rS.head * 100),
+                                   A_JIT: 50, A_AX: rS.ax, A_AY: rS.ay, A_AZ: rS.az, A_CAL: 2, A_NC: 8, A_LAYER: 0,
+                                   A_WRIST: 0, A_TUNE: 1 } });
+});
+var rt = sent.filter(function (m) { return m.R_SEQ === 61; })[0];
+check('hold SELECT there: the tune is on Saturn, and the aim is kept', rt && rt.TUNE_N === 1 &&
+      rt.R_DATA.split('\x1f')[3] === 'Saturn', rt && rt.TUNE_N + ' ' + rt.R_DATA.split('\x1f').join('/'));
+handlers.showConfiguration();
+var diagHtml = decodeURIComponent(opened.replace('data:text/html;charset=utf-8,', ''));
+check('About: diagnostics with the CLOSEST aim, location rounded', /Copy diagnostics/.test(diagHtml) &&
+      /CLOSEST Saturn/.test(diagHtml) && /about 33, -112 \(rounded\)/.test(diagHtml) && !/33\.49/.test(diagHtml));
+if (savedPool === undefined) delete store.sf_aim_v2;
+else store.sf_aim_v2 = savedPool;
+var pkgVersion = require('../package.json').version;
+check('APP_VERSION matches package.json', new RegExp("var APP_VERSION = '" + pkgVersion.replace('.', '\\.') + "';")
+      .test(require('fs').readFileSync(__dirname + '/../src/pkjs/index.js', 'utf8')), pkgVersion);
+
 // The slow path, with real timers: plane data never arrives. The answer
 // still comes, exactly once, by the deadline; in ANYTHING the stars and
-// planets aren't held up long, and the night line keeps the constellation.
+// planets aren't held up long (2.5 s, or 6 s where the feeds have been
+// slow); PLANES waits up to 9 s, then says why there are none.
 handlers.webviewclosed({ response: JSON.stringify({ planes: { on: true, minFt: 500, maxKm: 48, source: 'auto', rx: '' } }) });
 var realXhr = global.XMLHttpRequest;
 global.XMLHttpRequest = function () {
@@ -705,12 +750,12 @@ handlers.appmessage({ payload: { A_SEQ: 31, A_T: Math.floor(t0 / 1000), A_MS: t0
 setTimeout(function () {
   var r30 = sent.filter(function (m) { return m.R_SEQ === 30; });
   var r31 = sent.filter(function (m) { return m.R_SEQ === 31; });
-  check('ANYTHING answered by 2.5 s while planes are slow', r31.length === 1);
-  check('PLANES not yet (waits up to 3.5 s)', r30.length === 0);
+  check('ANYTHING answered by 6 s while planes are slow', r31.length === 1);
+  check('PLANES not yet (waits up to 9 s)', r30.length === 0);
   setTimeout(function () {
     r30 = sent.filter(function (m) { return m.R_SEQ === 30; });
     check('PLANES answered once, saying the data is slow', r30.length === 1 &&
-          r30[0].R_DATA.split('\x1f')[4] === 'Plane data is slow', r30[0] && r30[0].R_DATA.split('\x1f').join('/'));
+          r30[0].R_DATA.split('\x1f')[4] === 'Plane data too slow', r30[0] && r30[0].R_DATA.split('\x1f').join('/'));
     check('ANYTHING still answered only once', sent.filter(function (m) { return m.R_SEQ === 31; }).length === 1);
     global.XMLHttpRequest = realXhr;
     if (failures) {
@@ -719,5 +764,5 @@ setTimeout(function () {
     }
     console.log('PASS');
     process.exit(0);
-  }, 1300);
-}, 2700);
+  }, 3000);
+}, 6300);

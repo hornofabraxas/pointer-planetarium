@@ -63,6 +63,7 @@ var logbook = require('./logbook.js');
 var ephem = require('./ephem.js');
 var page = require('./settings_page.js');
 var collection = require('./collection.js');
+var Diag = require('./diag.js').Diag;
 
 var LOC_KEY = 'sf_location_v1';
 var SKY_KEY = 'sf_sky_v1';
@@ -97,8 +98,27 @@ var SETTINGS_KEYS = [SKY_KEY, SATS_KEY, UNITS_KEY, PLANES_KEY, AIM_KEY, FACTS_KE
 var LIGHT = ['read30', 'read60', 'finding', 'watch'];
 var LOC_FRESH_MS = 10 * 60 * 1000;
 var HTTP_TIMEOUT_MS = 20000;
-var AIM_WAIT_MS = 3500;   // longest a PLANES answer waits for plane data (the watch gives up at 6 s)
-var ANY_WAIT_MS = 2500;   // ANYTHING has stars and planets to give meanwhile, so waits less
+// The version in package.json (test/pkjs.test.js checks they agree), for
+// the diagnostics.
+var APP_VERSION = '1.1';
+// How long an answer waits for plane data, counted from the aim (the
+// request went out at the tap, a couple of seconds before). Abroad and on
+// mobile data a feed can take several seconds, so PLANES waits long (the
+// watch gives up at 12 s, main.c WAIT_TIMEOUT_MS); ANYTHING has stars and
+// planets to give meanwhile, so it waits less, unless the feeds have been
+// slow here lately (or haven't been asked yet).
+var AIM_WAIT_MS = 9000;
+var ANY_WAIT_MS = 2500;
+var ANY_SLOW_WAIT_MS = 6000;
+var SLOW_FEED_MS = 1500;
+// No aircraft at all near you: one wide look (once an hour, for a degree
+// of latitude and longitude) tells an empty sky from a place the feeds
+// barely cover. Fewer than THIN_N aircraft within COVER_NM: thin.
+var COVER_KEY = 'sf_cover_v1';   // {lat, lon (whole degrees), t, thin, n}
+var COVER_NM = 200;
+var COVER_RECHECK_MS = 3600000;
+var COVER_KEEP_MS = 7 * 86400000;
+var THIN_N = 10;
 var PLANES_STATUS_MS = 10 * 60000;   // "14 planes nearby" is stale after this
 var TUNE_SESSION_MS = 10 * 60000;    // a tune left this long starts over
 var WEAK_BEFORE_TIP = 3;             // unsure answers in a row before suggesting Tune on the Moon
@@ -121,6 +141,7 @@ var satAgain = false;   // settings changed mid-fetch: go round once more
 var planesStatus = '';  // the PLANES status line, from the latest plane data
 var planesStatusT = 0;
 var tuneSession = null; // {wrist, id, name, type, samples, t}
+var closestTune = null; // {id, t}: the target a CLOSEST card offered to tune on
 var weakRun = 0;        // answers in a row with nothing better than MAYBE
 var groundRun = 0;      // aims in a row that look like the wrong wrist
 var findList = null;    // the targets last sent for Find it, by id
@@ -148,6 +169,13 @@ function saveJSON(key, value) {
 function validLocation(h) {
   return h && typeof h.lat === 'number' && typeof h.lon === 'number' && isFinite(h.lat) &&
          isFinite(h.lon) ? h : null;
+}
+
+// What Tune my aim would tune on now (tune.pick), preferring what the
+// last CLOSEST card offered, for TUNE_SESSION_MS.
+function tuneTarget(date, sky) {
+  var mine = closestTune && Date.now() - closestTune.t < TUNE_SESSION_MS ? closestTune.id : null;
+  return tune.pick(date, here.lat, here.lon, sky, mine);
 }
 
 function skySetting() {
@@ -338,6 +366,7 @@ var planeStore = {
   load: loadJSON, save: saveJSON,
   remove: function (k) { try { localStorage.removeItem(k); } catch (e) { /* nothing to do */ } }
 };
+var diag = new Diag(planeStore);
 
 // ---------------------------------------------------------------- watch link
 
@@ -409,6 +438,8 @@ function refreshLocation(force) {
     here = { lat: c.latitude, lon: c.longitude,
              altKm: typeof c.altitude === 'number' ? c.altitude / 1000 : 0, t: Date.now() };
     saveJSON(LOC_KEY, here);
+    diag.noteLocation({ lat: here.lat, lon: here.lon, altKm: typeof c.altitude === 'number' ? here.altKm : null,
+                        acc: c.accuracy });
     sendStatus(false);
     var last = loadJSON(EPH_KEY, null);
     if (ephPending || !last || Math.abs(last.lat - here.lat) > EPH_MOVE_DEG ||
@@ -417,6 +448,7 @@ function refreshLocation(force) {
     }
   }, function (e) {
     locating = false;
+    diag.noteLocation(null, e && e.code);
     sendStatus(false);
   }, { enableHighAccuracy: false, timeout: 20000, maximumAge: LOC_FRESH_MS });
 }
@@ -451,14 +483,63 @@ function wantsPlanes(layer) {
   return planeSettings().on && (layer === matcher.LAYER.ANY || layer === matcher.LAYER.PLANES);
 }
 
+// Why there's no plane data, in the watch's words.
+function planesMissing() {
+  return feeds.why === 'slow' ? 'Plane data too slow' : "Can't reach plane data";
+}
+
+// No planes kept, in words: the feeds barely cover this place, or none
+// are tracked near you.
+function planesNone() {
+  return coverage() === 'thin' ? 'Few planes tracked here' : 'None tracked nearby';
+}
+
+// 'thin', 'ok' or '' (not looked) for here, from the last wide look.
+function coverage() {
+  var c = loadJSON(COVER_KEY, null);
+  if (!c || !here || c.lat !== Math.round(here.lat) || c.lon !== Math.round(here.lon)) return '';
+  return Date.now() - c.t < COVER_KEEP_MS ? (c.thin ? 'thin' : 'ok') : '';
+}
+
+// A feed answered with no aircraft at all: look wider, once in a while.
+function checkCoverage(res) {
+  if (!res || res.data.n > 0 || planes.PUBLIC.indexOf(res.feed) < 0) return;
+  var c = loadJSON(COVER_KEY, null);
+  var lat = Math.round(here.lat), lon = Math.round(here.lon);
+  var same = c && c.lat === lat && c.lon === lon;
+  if (same && Date.now() - Math.max(c.t, c.asked || 0) < COVER_RECHECK_MS) return;
+  // Asked now: not again for an hour, whatever comes back. What was known
+  // here stays meanwhile; a new place starts unknown.
+  saveJSON(COVER_KEY, { lat: lat, lon: lon, t: same ? c.t : 0, asked: Date.now(), thin: same && !!c.thin,
+                        n: same ? c.n : null });
+  setTimeout(function () {   // adsb.fi allows a request a second
+    if (!feeds.free(res.feed)) return;   // resting (refused) or busy: try again in an hour
+    feeds.started[res.feed] = Date.now();   // so the next aim's request keeps its distance
+    http(planes.feedUrl(res.feed, here, { nm: COVER_NM }), function (status, text) {
+      var d = status === 200 && text ? planes.parseFeed(text, Date.now()) : null;
+      if (!d) return;   // can't tell: try again in an hour
+      saveJSON(COVER_KEY, { lat: lat, lon: lon, t: Date.now(), thin: d.n < THIN_N, n: d.n });
+      if (d.n < THIN_N) {
+        planesStatus = planesNone();
+        planesStatusT = Date.now();
+        sendStatus(false);
+      }
+    });
+  }, 2000);
+}
+
 // The count on the PLANES rung, from the latest plane data.
 function notePlanes(res) {
+  var drops = {};
   if (!res) {
-    planesStatus = "Can't reach plane data";
+    planesStatus = planesMissing();
   } else {
-    var n = planes.positions(res.data, Date.now(), here, planeOpts(), standing).length;
-    planesStatus = n ? n + (n === 1 ? ' plane nearby' : ' planes nearby') : 'No planes nearby';
+    var n = planes.positions(res.data, Date.now(), here, planeOpts(), standing, drops).length;
+    planesStatus = n ? n + (n === 1 ? ' plane nearby' : ' planes nearby') : planesNone();
+    checkCoverage(res);
   }
+  diag.notePlanes(feeds.log, res ? { feed: res.feed, n: res.data.n, stale: res.data.stale, kept: n, drops: drops,
+                                     cover: coverage() } : { why: feeds.why, cover: coverage() });
   planesStatusT = Date.now();
   sendStatus(false);
 }
@@ -490,9 +571,13 @@ function planesForAim(date, aimTrue, waitMs, cb) {
       if (got) {
         out.planes = planes.positions(got.data, date.getTime(), here, planeOpts(), standing);
         out.feed = got.feed + ' ' + got.data.ac.length;
+        // None at all: whether the feeds cover this place. Some, but none
+        // near the aim: the matcher says so.
+        if (!out.planes.length) out.note = planesNone();
+        out.thin = coverage() === 'thin';
       } else {
-        out.note = failed ? "Can't reach plane data" : 'Plane data is slow';
-        out.feed = failed ? 'failed' : 'slow';
+        out.note = failed ? planesMissing() : 'Plane data too slow';
+        out.feed = failed ? feeds.why || 'failed' : 'slow';
       }
     } catch (e) {
       out = { planes: null, note: "Can't read plane data", feed: 'error' };
@@ -588,7 +673,7 @@ function sendStatus(force) {
     lines[4] = find.starsStatus(now, here, sky.sunAlt, sky.sky, units());
     msg.STATUS = lines.concat([findStatus(now, sky)]).join('\x1f');
     msg.SKY_FRAME = skyFrame(now);
-    var tgt = tune.pick(now, here.lat, here.lon, sky);
+    var tgt = tuneTarget(now, sky);
     msg.TUNE_TGT = tgt ? tgt.name + '\x1f' + tgt.where : '';
   } else {
     msg.STATUS = ['Need your location', planeSettings().on ? 'Need your location' : '',
@@ -761,6 +846,7 @@ function addExtras(cards, sky, date, msg, aim) {
   var top = cards[0];
   var T = matcher.TYPE;
   if (!top || !top.ref) return cards;
+  if (top.word >= matcher.WORD.CLOSEST) return closestExtras(cards, sky, msg, aim);
   if (top.word === matcher.WORD.THATS) aim = null;
   var extra = [];
   var inline = top.type === T.STAR || top.type === T.CONSTELLATION || top.type === T.SATELLITE ||
@@ -800,6 +886,30 @@ function addExtras(cards, sky, date, msg, aim) {
     }
   }
   return [top].concat(extra, cards.slice(1));
+}
+
+// A CLOSEST card's one extra: a chart of where you pointed (the aim's
+// mark) and the bright thing nearest it (circled), wide enough for both.
+// No fact: it isn't an answer yet.
+var CLOSEST_FIELD_PAD = 8;
+function closestExtras(cards, sky, msg, aim) {
+  var top = cards[0], r = top.ref;
+  if (!aim) return cards;
+  try {
+    var opts = { jd: sky.jd, lat: sky.lat, lon: sky.lon, aim: aim, bare: true, target: { az: top.az, alt: top.alt },
+                 minField: Math.max(LANDMARK_BARE_FIELD, 2 * top.d + CLOSEST_FIELD_PAD) };
+    opts.planets = [sky.moon].concat(sky.bodies.slice(1)).filter(function (b) {
+      return b.alt > 0 && b.mag < 3 && !(r.kind === 'moon' ? b === sky.moon : b.name === top.name);
+    });
+    if (r.kind === 'star') opts.targetStar = r.index;
+    var c = chart.build(opts);
+    if (!c) return cards;
+    msg.R_CHART = c.bytes;
+    return [top, { type: matcher.TYPE.CHART, word: 0, l1: 'Where you pointed', l2: top.planeNote || top.name + ' is circled',
+                   l3: '', hint: '' }].concat(cards.slice(1));
+  } catch (e) {
+    return cards;
+  }
 }
 
 // Which facts have been shown: each subject turns to its next fact.
@@ -1073,7 +1183,7 @@ function fitCards(cards, msg) {
 // (After the answer has gone: a failure here is ignored, never sent.)
 function noteSeen(card, how, date) {
   try {
-    if (!card) return;
+    if (!card || card.word >= matcher.WORD.CLOSEST) return;   // not an answer: only what's nearest
     if (how !== 'found') {
       how = card.word === matcher.WORD.THATS ? 'sure' : card.word === matcher.WORD.PROBABLY ? 'likely' : '';
     }
@@ -1098,6 +1208,49 @@ function handleAim(p) {
   } catch (e) {
     aimFailed(p);
   }
+}
+
+// A CLOSEST card (matcher.js) says how far off the nearest bright thing
+// was. If it's good to tune on, the card offers that (hold SELECT starts
+// Tune my aim on it at once: main.c select_long), and the watch is told
+// the target with the answer (TUNE_TGT, named as the card is, so the watch
+// can tell the two belong together).
+function offerClosestTune(cards, date, sky, reply) {
+  var c = cards.filter(function (x) { return x.word === matcher.WORD.CLOSEST; })[0];
+  if (!c) return;
+  var id = tune.idFor(c.ref);
+  var tgt = id ? tune.pick(date, here.lat, here.lon, sky, id) : null;
+  if (!tgt || tgt.id !== id) {
+    c.word = matcher.WORD.CLOSEST_FAR;   // hold SELECT opens the menu, as anywhere
+    c.l3 = "Can't tune on it now";   // too low or high, too near the Sun, or too faint at dusk
+    return;
+  }
+  c.l3 = 'Meant it? Hold SELECT';
+  closestTune = { id: id, t: Date.now() };
+  reply.TUNE_TGT = tgt.name + '\x1f' + tgt.where;
+}
+
+// The answer's cards had to be cut to fit the watch: if the CLOSEST card
+// offering the tune went, so does the offer.
+function keepClosestTune(reply) {
+  if (!reply.TUNE_TGT) return;
+  var kept = String(reply.R_DATA || '').split('\x1e').some(function (c) {
+    return c.split('\x1f')[1] === String(matcher.WORD.CLOSEST);
+  });
+  if (!kept) {
+    delete reply.TUNE_TGT;
+    closestTune = null;
+  }
+}
+
+// ANYTHING found nothing, and the planes didn't come (or the feeds barely
+// cover this place): say so, in place of the constellation (the chart
+// still shows it), since the user may have pointed at a plane. When the
+// answer is CLOSEST, its chart's caption says it instead.
+function planeNoteOnNothing(cards, note) {
+  var c = cards[0];
+  if (c && c.type === matcher.TYPE.NOTHING) c.l3 = note;
+  else if (c && c.word >= matcher.WORD.CLOSEST) c.planeNote = note;   // its chart's caption (closestExtras)
 }
 
 // The aim's time comes from the watch clock. Satellites move a degree a
@@ -1144,6 +1297,8 @@ function answerAim(p) {
       sky.planesNote = pl.note;
     }
     var result = matcher.match(aim, sky);
+    if (pl && aim.layer === matcher.LAYER.ANY && (!pl.planes || pl.thin && !pl.planes.length)) planeNoteOnNothing(result.cards, pl.note);
+    offerClosestTune(result.cards, date, sky, reply);
     // Unsure again and again: suggest tuning, if there's something to tune
     // on. Planes and satellites are left out: there, "nothing" is as often
     // the data as the aim.
@@ -1151,13 +1306,14 @@ function answerAim(p) {
     if (aim.layer === L.ANY || aim.layer === L.PLANETS || aim.layer === L.STARS) {
       weakRun = result.top && result.top.word !== matcher.WORD.MAYBE ? 0 : weakRun + 1;
       var first = result.cards[0];
-      if (weakRun >= WEAK_BEFORE_TIP && first.type === matcher.TYPE.NOTHING && !first.hint &&
-          tune.pick(date, here.lat, here.lon)) {
-        first.hint = 'Hold SELECT: tune on the Moon';
-      }
+      var tgt = first.type === matcher.TYPE.NOTHING && !first.hint ? tuneTarget(date, sky) : null;
+      var tip = tgt ? 'Hold SELECT: tune on ' + tgt.name : '';
+      if (weakRun >= WEAK_BEFORE_TIP && tgt) first.hint = planes.utf8Len(tip) <= 30 ? tip : 'Hold SELECT to tune';
     }
+    diag.noteAim(p, aim, dir, finger, result.cards, pl, sky);
     if (p.askWrist) reply.WRIST_Q = 1;
     fitCards(addExtras(result.cards, sky, date, reply, { az: aim.az, alt: aim.alt }), reply);
+    keepClosestTune(reply);
     send(reply);
     learnFrom(p, field.declination, dir, finger, result.cards);
     noteSeen(result.cards[0], '', date);
@@ -1166,7 +1322,9 @@ function answerAim(p) {
     answer(null);
     return;
   }
-  var waitMs = aim.layer === matcher.LAYER.PLANES ? AIM_WAIT_MS : ANY_WAIT_MS;
+  var typical = feeds.typicalMs();
+  var waitMs = aim.layer === matcher.LAYER.PLANES ? AIM_WAIT_MS
+             : typical === null || typical > SLOW_FEED_MS ? ANY_SLOW_WAIT_MS : ANY_WAIT_MS;
   planesForAim(date, { az: aim.az, alt: A.unrefract(aim.alt) }, waitMs, function (pl) {
     try {
       answer(pl);
@@ -1207,7 +1365,7 @@ function learnFrom(p, decl, dir, inUse, cards) {
   return true;
 }
 
-// One "Tune on the Moon" aim. A_TUNE is which of the three the watch thinks
+// One "Tune my aim" aim. A_TUNE is which of the three the watch thinks
 // this is; 1 starts over. The reply carries how many are in so far, and
 // until the last one a single card: the note, the target, where it is.
 function tuneAim(p, date, decl) {
@@ -1222,10 +1380,10 @@ function tuneAim(p, date, decl) {
   }
   var s = tuneSession;
   if (p.A_TUNE === 1 || !s || s.wrist !== wrist || Date.now() - s.t > TUNE_SESSION_MS) {
-    var tgt = tune.pick(date, here.lat, here.lon);
+    var tgt = tuneTarget(date);
     if (!tgt) {
       tuneSession = null;
-      reply(TUNE_CANT, "The Moon isn't up", 'or is too low, high', 'or near the Sun');
+      reply(TUNE_CANT, 'Nothing to tune on', 'No Moon or bright planet', 'up high enough now');
       return;
     }
     s = tuneSession = { wrist: wrist, id: tgt.id, name: tgt.name, type: tgt.type, samples: [], t: 0 };
@@ -1392,6 +1550,37 @@ function bookPage() {
   return v;
 }
 
+// The diagnostics for the About tab (diag.js), with what's true now.
+function diagText() {
+  try {
+    var now = new Date(Date.now());
+    var extra = { version: APP_VERSION, now: now.getTime() };
+    try {
+      var w = Pebble.getActiveWatchInfo && Pebble.getActiveWatchInfo();
+      if (w) extra.phone = (w.platform || '') + ' watch, firmware ' + (w.firmware ? [w.firmware.major, w.firmware.minor,
+                           w.firmware.patch].join('.') : '?') + (w.language ? ', ' + w.language : '');
+    } catch (e) {
+      /* no watch info */
+    }
+    if (here) {
+      var f = wmm.field(here.lat, here.lon, here.altKm || 0, now);
+      extra.field = { decl: f.declination, h: Math.round(f.h) };
+    }
+    var ps = planeSettings();
+    extra.settings = { sky: skySetting(), gear: findShow(), units: units(), planes: ps.on ? 'on' : 'off',
+                       source: ps.source, maxKm: ps.maxKm, minFt: ps.minFt, sats: satsOn() ? 'on' : 'off',
+                       typicalFeedMs: feeds.typicalMs() };
+    extra.aim = [0, 1].map(function (wr) {
+      var o = offsetFor(wr), pool = aimPool(wr);
+      return (wr ? 'R' : 'L') + ' offset ' + Math.round(o.yaw * 10) / 10 + '/' + Math.round(o.pitch * 10) / 10 +
+             ' from ' + pool.length + ' (' + pool.map(function (m) { return m.src; }).join(',') + ')';
+    }).join('; ');
+    return diag.text(extra);
+  } catch (e) {
+    return 'Diagnostics failed: ' + e;
+  }
+}
+
 Pebble.addEventListener('showConfiguration', function () {
   var got = satellites.fetchedAt(satStore, { stations: true, visual: true, 'last-30-days': true });
   function aimLine(wrist) {
@@ -1430,6 +1619,7 @@ Pebble.addEventListener('showConfiguration', function () {
     satAgo: { stations: updated(got.stations), visual: updated(got.visual), trains: updated(got['last-30-days']) },
     facts: factsOn(), units: unitsSetting(),
     aimLines: [aimLine(0), aimLine(1)],
+    diag: diagText(),
     credits: CREDITS, sunEye: find.SUN_EYE, sunAided: find.SUN_AIDED
   });
   Pebble.openURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));

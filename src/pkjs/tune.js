@@ -13,8 +13,10 @@
 //   point at things they want named, and a confident answer says what it
 //   was. The aims come from all round the sky, so a compass error that
 //   changes with direction averages out instead of being locked in.
-// - Tune on the Moon: three aims at the Moon, the one thing everyone can
-//   find. Offered in the menu, never required.
+// - Tune my aim: three aims at the Moon or a bright planet (things anyone
+//   can find without naming stars), offered in the menu, never required;
+//   or at whatever bright thing a CLOSEST card said was nearest the aim,
+//   when the user says that was the one they meant (any of targets()).
 
 var A = require('./astro.js');
 var planets = require('./planets.js');
@@ -93,9 +95,23 @@ function targets(date, lat, lon, sky) {
   return out;
 }
 
-// The Moon, when it's good to tune on; else null.
-function pick(date, lat, lon, sky) {
-  return targets(date, lat, lon, sky).filter(function (t) { return t.id === 'moon'; })[0] || null;
+// What to tune on now: preferId (a CLOSEST card's, which the user picked)
+// while it's good to tune on; else the Moon; else the brightest planet
+// (stars only by choice: most people can't find one by name); else null.
+function pick(date, lat, lon, sky, preferId) {
+  var all = targets(date, lat, lon, sky);
+  var mine = preferId ? all.filter(function (t) { return t.id === preferId; })[0] : null;
+  return mine || all.filter(function (t) { return t.type !== matcher.TYPE.STAR; })[0] || null;
+}
+
+// The tune id for a card's ref ('moon', a planet id, 'star:<index>'), or
+// null for anything that can't be tuned on.
+function idFor(ref) {
+  if (!ref) return null;
+  if (ref.kind === 'moon') return 'moon';
+  if (ref.kind === 'planet') return ref.id;
+  if (ref.kind === 'star' && typeof ref.index === 'number') return 'star:' + ref.index;
+  return null;
 }
 
 // ---------------------------------------------------------------- learning
@@ -190,5 +206,5 @@ function finish(samples, before) {
 
 module.exports = { NEEDED: NEEDED, POOL_MAX: POOL_MAX, POOL_MIN: POOL_MIN, LEARN_MAX_DEV: LEARN_MAX_DEV,
                    learnable: learnable, sample: sample, addToPool: addToPool, poolOffset: poolOffset,
-                   targets: targets, pick: pick, position: position, where: where,
+                   targets: targets, pick: pick, idFor: idFor, position: position, where: where,
                    measure: measure, fit: fit, finish: finish, missWith: missWith, median: median };
